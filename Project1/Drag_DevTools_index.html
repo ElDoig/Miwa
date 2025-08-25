@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+        <meta name="viewport" content="user-scalable=no">
+        <link rel="icon" href="icon/icon.png" type="image/png">
+        <link rel="apple-touch-icon" href="icon/icon.png">
+		<link href="./css/Drag_DevTools.css" rel="stylesheet">
+    </head>
+    <body onchange="bodyOnChange();">
+		<div id="menu" class="menuClosed fixed">
+			<div class="openMenu"><span>&#9776;</span></div>
+		</div>
+		<div onclick="toggleLightMode()" id="lightMode" data-lightMode="light">
+			<span>&#9790;</span>
+			<span>&#9728;</span>
+		</div>
+		<script type="text/javascript">				
+		
+			//----------------------------------------------------------------------
+			//init functions
+		
+			function main() {
+				document.title = "Drag_DevTools";
+				createView();
+				loadDataMainWindow();
+				importViews();
+			};
+			
+			function createView() {
+				view = document.createElement('div');
+				view.setAttribute('id', 'view');
+				document.body.appendChild(view)
+			};
+			
+			function loadDataMainWindow() {
+				$ = window.opener;
+			};
+			
+			async function importViews() {
+				loadCount = 0;
+				window.allScriptLoaded = false;
+				for (v of $.Drag.views) {					
+					await new Promise((resolve) => {
+						let script = document.createElement("script");
+
+						script.onload = () => {
+							resolve();
+							onScriptLoad();
+						};
+						
+						script.type = "text/javascript";
+						script.src = `./js/Drag_DevTools_Views/${v}.js`;
+
+						document.head.appendChild(script);
+					});
+				}
+			};
+			
+			function onScriptLoad() {
+				if (++loadCount === $.Drag.views.length) {
+					window.allScriptLoaded = true;
+					createMenu();
+					setTopMenu();
+					loadConfig();
+				}
+			};
+			
+			function setLightMode(lightMode = null, saveConf = true) {
+				lightMode = lightMode || "light";
+				let eLightMode = document.querySelector("#lightMode");
+				if (lightMode === "light") {
+					document.documentElement.style.setProperty('--background-color', '#ffffff');
+					document.documentElement.style.setProperty('--color', "#000000");
+					document.documentElement.style.setProperty('--color-alpha-03', '#0000001a');
+					eLightMode.setAttribute('data-lightMode', lightMode);
+				} else if (lightMode === "dark") {
+					document.documentElement.style.setProperty('--background-color', '#2a2b36');
+					document.documentElement.style.setProperty('--color', '#f5f5dc');
+					document.documentElement.style.setProperty('--color-alpha-03', '#f5f5dc0d');
+					eLightMode.setAttribute('data-lightMode', lightMode);
+				}
+				if (saveConf)
+					saveConfig();
+			};
+			
+			function getLightMode() {
+				return document.querySelector("#lightMode").getAttribute('data-lightMode') || "light";
+			};
+			
+			function toggleLightMode() {
+				let lightMode = getLightMode();
+				if (lightMode === "light")
+					setLightMode("dark");
+				else
+					setLightMode("light");
+			};
+			
+			function loadConfig() {
+				try {
+					loadFile("./save/DragDevToolsConfig.json", applyConfig, configError);
+				} catch(e) {
+					configError();
+				}
+			};
+			
+			function applyConfig(config = {}) {
+				if (config.view)
+					goToView(config.view);
+				if (config.inputValues)
+					setInputValues(config.inputValues);
+				if (config.lightMode)
+					setLightMode(config.lightMode, false);
+					
+				console.log("Drag's Dev' Tools, applied config", config);
+				this._configLoaded = true;
+			};
+			
+			function configError() {
+				console.error("Drag's Dev' Tools, can't apply config file");
+				this._configLoaded = true;
+			};
+			
+			function saveConfig() {
+				if (!this._configLoaded)
+					return;
+				
+				let submenuSelected = document.querySelector(".subMenuSelected");
+				let config = {
+					view: submenuSelected.getAttribute('data-label'),
+					inputValues: getResultFilterValues(),
+					lightMode: getLightMode()
+				};
+				
+				writeFile("./save/DragDevToolsConfig.json", config);
+				console.log("Drag's Dev' Tools, config saved", config);
+			};
+			
+			function loadFile(url, callback, errorCallback) {
+				const xhr = new XMLHttpRequest();
+				xhr.open("GET", url);
+				xhr.overrideMimeType("application/json");
+				xhr.onload = () => this.onXhrLoad(xhr, url, callback);
+				xhr.onerror = () => this.onXhrError(url, errorCallback);
+				xhr.send();
+			};
+			
+			function onXhrLoad(xhr, url, callback) {
+				if (xhr.status < 400)
+					callback(JSON.parse(xhr.responseText));
+				else
+					onXhrError(url);
+			};
+
+			function onXhrError(url, errorCallback) {
+				console.error(`Couldn't load file ${url}`);
+				errorCallback();
+			};
+			
+			function writeFile(filename, obj) {
+				if (!obj || !filename)
+					return;
+				
+				const fs = require('fs');
+				const data = JSON.stringify(obj);
+
+				fs.writeFile(filename, data, function(err) {
+					if (err)
+						console.error(err);
+				});
+			};
+			
+			function goToView(label) {
+				let submenu = document.querySelector(`#menu .submenu[data-label="${label}"]`);
+				if (submenu)
+					submenu.onclick();
+				refreshView();
+			};
+			
+			function getResultFilterValues() {
+				let inputValues = [];
+				let inputs = document.querySelectorAll('#resultFilter input') || [];
+				for (input of inputs) {
+					if (input.getAttribute('type') === "text")
+						inputValues.push([`#${input.getAttribute('id')}`, input.value]);
+					else if (input.getAttribute('type') === "radio" || input.getAttribute('type') === "checkbox")
+						inputValues.push([`#${input.getAttribute('id')}`, input.checked]);
+				}
+				return inputValues;
+			};
+			
+			function setInputValues(inputValues) {
+				for (inputValue of inputValues) {
+					let input = document.querySelector(`${inputValue[0]}`);
+					if (input) {
+						triggerEvents = false;
+						if (input.getAttribute('type') === "text") {
+							input.value = inputValue[1];
+							var triggerEvents = true;
+						} else if (input.getAttribute('type') === "radio" || input.getAttribute('type') === "checkbox") {
+							input.checked = inputValue[1];
+							if (input.checked)
+								var triggerEvents = true;
+						}
+						if (triggerEvents) {
+							if (typeof input.onchange === "function")
+								input.onchange();
+							if (typeof input.onclick === "function")
+								input.onclick();
+						}
+					}
+				}
+				saveConfig();
+			};
+			
+			function resetFilters() {
+				let inputValues = [];
+				let inputs = document.querySelectorAll('#resultFilter input');
+				for (input of inputs) {
+					let defaultValue = input.getAttribute('data-default');
+					if (input.getAttribute('type') === "text")
+						inputValues.push([`#${input.getAttribute('id')}`, defaultValue]);
+					else if (input.getAttribute('type') === "radio" || input.getAttribute('type') === "checkbox")
+						inputValues.push([`#${input.getAttribute('id')}`, defaultValue === "true"]);
+				}
+				setInputValues(inputValues);
+			};
+			
+			function scrollToElement(target) {
+				const yOffset = -20; 
+				const element = document.querySelector(target);
+				const y = element.getBoundingClientRect().top + window.pageYOffset + yOffset;
+				window.scrollTo({top: y, behavior: 'smooth'});
+			};
+			
+			//----------------------------------------------------------------------
+			//top fixed menu
+			
+			function createMenu() {
+				for (menu in $.Drag.devTools.menu)
+						addToMenu(menu, $.Drag.devTools.menu[menu]);
+			};
+			
+			function addToMenu(title, labels) {
+				const menu = document.querySelector(`#menu`);
+				let submenu = document.querySelector(`div[data-title="${title}"]`);
+				if (!submenu) {
+					submenu = document.createElement('div');
+					submenu.setAttribute('class', 'submenus');
+					submenu.setAttribute('data-title', title);
+					document.querySelector(`#menu`).appendChild(submenu);
+				}
+				for (label of labels) {
+					const submenuLabel = document.createElement('div');
+					submenuLabel.setAttribute('class', 'submenu');
+					submenuLabel.setAttribute('data-label', label[0]);
+					submenuLabel.onclick = function() {
+						onMenuClick(this);
+					};
+					submenuLabel.innerHTML = `<span>${label[1]}</span>`;
+					submenu.appendChild(submenuLabel);
+				}
+			};
+			
+			function onMenuClick(elem) {
+				if (elem.classList.contains("subMenuSelected"))
+					return;
+				[...document.querySelectorAll('.subMenuSelected')].map(e => e.classList.remove('subMenuSelected'));
+				if (elem) {
+					elem.classList.add("subMenuSelected");
+					refreshView();
+					saveConfig();
+				}
+			};
+			
+			function setTopMenu() {
+				document.querySelector('#menu .submenus:not(.hidden) .submenu').classList.add('subMenuSelected');
+			};
+			
+			//----------------------------------------------------------------------
+			//display/update view handler
+			
+			function requestRefreshView() {
+				if (!$.document.hasFocus())
+					return;
+				loadDataMainWindow();
+				refreshView();
+			};
+			
+			function refreshView() {
+				if (!window.allScriptLoaded)
+					return;
+				let subMenuSelected = document.querySelector('#menu .subMenuSelected');
+				if (!subMenuSelected)
+					return;
+				
+				let subMenuSelectedLabel = subMenuSelected.getAttribute('data-label');
+				let currentView = view.getAttribute('data-view');
+				if (!currentView || currentView.toLowerCase() !== subMenuSelectedLabel.toLowerCase()) {
+					if (currentView) {
+						var quitMethod = `quit${currentView}`;
+						if (typeof this[quitMethod] === "function")
+							this[quitMethod]();
+						else 
+							console.warn(`Drag's Dev' Tools, invalid view quit method : ${quitMethod}`);
+					}
+				
+					var method = `init${subMenuSelectedLabel}`;
+				} else
+					var method = `update${subMenuSelectedLabel}`;
+				
+				if (typeof this[method] === "function")
+					this[method]();
+				else 
+					console.warn(`Drag's Dev' Tools, invalid view display method : ${method}`);
+			};
+			
+			//----------------------------------------------------------------------
+			//headers
+			
+			function updateSliderPos(elem) {
+				let eSliderPos = elem.parentNode.querySelector('#slider-pos');
+				let left = (parseInt(elem.value) * 33.33333) - 16.66665;
+				eSliderPos.style.left = left + "%";
+			};
+			
+			function updateOutputValue(elem, prefix = "") {
+				elem.nextElementSibling.value = elem.value + prefix;
+			};
+			
+			function getMapHeader(mapId = $.$gameMap._mapId, name = null) {
+				if (!name && $.$dataMapInfos && $.$dataMapInfos[mapId])
+					name = $.$dataMapInfos[mapId].name || "";
+				else if (!name)
+					name = "";
+				return `<br><h2>Map <span class="circle">${mapId}</span> <span class="fontSystemUi">${name}</span></h2>`;
+			};
+			
+			function getEventHeader(eventId, eventName) {
+				return `
+					<div class="textCenter">
+						<hr class="divider">
+						<h3 class="marginAuto">
+							<span class="squareTitle colorRoot borderColorRoot">${eventId}</span>
+							<span class="squareTitle colorRoot borderColorRoot">${eventName}</span>
+						</h3>
+					</div>`;
+			};
+			
+			function getPlayerHeader() {
+				return `
+					<div class="textCenter">
+						<hr class="divider">
+						<h3 class="marginAuto">
+							<span class="squareTitle colorRoot borderColorRoot">Game Player</span>
+						</h3>
+					</div>`;
+			};
+			
+			//-----------------------------------------------------------------
+			// radio with custom event
+			
+			//id, name, val, data, onchange, customEvent, checked, showLabel, label
+			// function getRadioCustomEvent(params) {
+				// return `
+					// <div class="gridColGap5 gridColMinMax alignItemsCenter">
+						// <input ${params.data}
+							// onchange="changeEventCommandParam(this); ${params.onchange}" ${params.customEvent} 
+							// type="radio" id="${params.id}" name="${params.name}" value="${params.val}" ${params.checked ? 'checked' : ''}
+						// >
+						// ${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					// </div>`;
+			// };
+			
+			//-----------------------------------------------------------------
+			// filtered inputs
+			
+			function getSwitchFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''}" data-after="${$.$gameSwitches.getName(params.val)} (${$.$gameSwitches.value(params.val) ? 'ON' : 'OFF'})">
+						<input data-filterType="switch" ${params.data}
+							oninput="onSwitchFilterConditionFocus(this);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${params.val}" min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onSwitchFilterConditionFocus(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for ([switchId, switchName] of $.$dataSystem.switches.entries()) {
+					if (switchId === 0 || !(switchId === parseInt(elem.value) || switchName.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let switchValue = $.$gameSwitches.value(switchId);
+					let opt = document.createElement("option");
+					opt.value = switchId;
+					opt.text = `#${switchId} ${switchName}`;
+					if (switchValue) {
+						opt.classList.add("bgGreen");
+						opt.classList.remove("bgRed");
+					} else {
+						opt.classList.add("bgRed");
+						opt.classList.remove("bgGreen");
+					}
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getVariableFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''}" data-after="${$.$gameVariables.getName(params.val)} (${$.$gameVariables.value(params.val)})">
+						<input data-filterType="var" ${params.data}
+							oninput="onVariableFilterConditionFocus(this, false);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${params.val}" min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onVariableFilterConditionFocus(elem, checkCondition = true) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for ([varId, varName] of $.$dataSystem.variables.entries()) {
+					if (varId === 0 || !(varId === parseInt(elem.value) || varName.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let eventId = elem.getAttribute('data-eventId');
+					let pageId = elem.getAttribute('data-pageId');					
+					let varValue = $.$gameVariables.value(varId);
+					let opt = document.createElement("option");
+					opt.value = varId;
+					opt.text = `#${varId} ${varName} (${varValue})`;
+					if (checkCondition) {
+						let isGreater = $.$gameVariables.value(varId) >= $.$dataMap.events[eventId].pages[pageId].conditions.variableValue;
+						if (isGreater) {
+							opt.classList.add("bgGreen");
+							opt.classList.remove("bgRed");
+						} else {
+							opt.classList.add("bgRed");
+							opt.classList.remove("bgGreen");
+						}
+					}
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getItemFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''}" data-after="${$.$dataItems[params.val] ? $.$dataItems[params.val].name : $.$dataItems[1].name}">
+						<input data-filterType="item" ${params.data}
+							oninput="onItemFilterConditionFocus(this);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${$.$dataItems[params.val] ? params.val : 1}" min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onItemFilterConditionFocus(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for (item of $.$dataItems) {
+					if (!item || !(item.id === parseInt(elem.value) || item.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let hasItem = $.$gameParty.hasItem(item);
+					let opt = document.createElement("option");
+					opt.value = item.id;
+					opt.text = `#${item.id} ${item.name}`;
+					if (hasItem) {
+						opt.classList.add("bgGreen");
+						opt.classList.remove("bgRed");
+					} else {
+						opt.classList.add("bgRed");
+						opt.classList.remove("bgGreen");
+					}
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getWeaponFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''}" data-after="${$.$dataWeapons[params.val] ? $.$dataWeapons[params.val].name : $.$dataWeapons[1].name}}">
+						<input data-filterType="weapon" ${params.data}
+							oninput="onWeaponFilterConditionFocus(this);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${$.$dataWeapons[params.val] ? params.val : 1}" min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onWeaponFilterConditionFocus(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for (weapon of $.$dataWeapons) {
+					if (!weapon || !(weapon.id === parseInt(elem.value) || weapon.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let hasItem = $.$gameParty.hasItem(weapon, true);
+					let opt = document.createElement("option");
+					opt.value = weapon.id;
+					opt.text = `#${weapon.id} ${weapon.name}`;
+					if (hasItem) {
+						opt.classList.add("bgGreen");
+						opt.classList.remove("bgRed");
+					} else {
+						opt.classList.add("bgRed");
+						opt.classList.remove("bgGreen");
+					}
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getArmorFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''}" data-after="${$.$dataArmors[params.val] ? $.$dataArmors[params.val].name : $.$dataArmors[1].name}">
+						<input data-filterType="armor" ${params.data}
+							oninput="onArmorFilterConditionFocus(this);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${$.$dataArmors[params.val] ? params.val : 1}" min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onArmorFilterConditionFocus(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for (armor of $.$dataArmors) {
+					if (!armor || !(armor.id === parseInt(elem.value) || armor.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let hasItem = $.$gameParty.hasItem(armor, true);
+					let opt = document.createElement("option");
+					opt.value = armor.id;
+					opt.text = `#${armor.id} ${armor.name}`;
+					if (hasItem) {
+						opt.classList.add("bgGreen");
+						opt.classList.remove("bgRed");
+					} else {
+						opt.classList.add("bgRed");
+						opt.classList.remove("bgGreen");
+					}
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getActorFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''} ${params.smallWrap ? 'smallWrapInputFilter' : ''}" 
+						data-after="${(params.val === 0 && params.includeEntireParty) ? 'Entire Party' : $.$dataActors[params.val] ? $.$dataActors[params.val].name : $.$dataActors[1].name}"
+					>
+						<input data-filterType="actor" ${params.data}
+							oninput="onActorFilterConditionFocus(this, ${params.includeEntireParty});" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${(params.val === 0 && params.includeEntireParty) ? '0' : $.$dataActors[params.val] ? params.val : '1'}" 
+							min="${params.includeEntireParty ? '0' : '1'}" placeholder="${params.includeEntireParty ? '0' : '1'}" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onActorFilterConditionFocus(elem, includeEntireParty = false) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				if (includeEntireParty && (parseInt(elem.value) === 0 || "entire party".includes(elem.value.toString().toLowerCase()))) {
+					let opt = document.createElement("option");
+					opt.value = 0;
+					opt.text = `#0 Entire Party`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				for (actor of $.$dataActors) {
+					if (!actor || !(actor.id === parseInt(elem.value) || actor.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let hasActor = $.$gameParty.members().contains($.$gameActors.actor(actor.id));
+					let opt = document.createElement("option");
+					opt.value = actor.id;
+					opt.text = `#${actor.id} ${actor.name}`;
+					if (hasActor) {
+						opt.classList.add("bgGreen");
+						opt.classList.remove("bgRed");
+					} else {
+						opt.classList.add("bgRed");
+						opt.classList.remove("bgGreen");
+					}
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getCommonEventFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''} ${params.smallWrap ? 'smallWrapInputFilter' : ''}" 
+						data-after="${$.$dataCommonEvents[params.val] ? $.$dataCommonEvents[params.val].name : $.$dataCommonEvents[1].name}"
+					>
+						<input data-filterType="commonevent" ${params.data}
+							oninput="onCommonEventFilterConditionFocus(this);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${$.$dataCommonEvents[params.val] ? params.val : '1'}" min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onCommonEventFilterConditionFocus(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for ([commonEventId, commonEvent] of $.$dataCommonEvents.entries()) {
+					if (commonEventId === 0 || !(commonEventId === parseInt(elem.value) || commonEvent.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let opt = document.createElement("option");
+					opt.value = commonEventId;
+					opt.text = `#${commonEventId} ${commonEvent.name}`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getEventFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''} ${params.smallWrap ? 'smallWrapInputFilter' : ''}" 
+						data-after="${(params.val === -1 && params.includePlayer) ? 'Player' : (params.val === 0 && params.includeThisEvent) ? 'This Event' : ($.$dataMap && $.$dataMap.events[params.val]) ? $.$dataMap.events[params.val].name : $.$dataMap && $.$dataMap.events[1] ? $.$dataMap.events[1].name : ''}"
+					>
+						<input data-filterType="event" ${params.data}
+							oninput="onEventFilterConditionFocus(this, ${params.includeThisEvent}, ${params.includePlayer});" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${(params.val === -1 && params.includePlayer) ? '-1' : (params.val === 0 && params.includeThisEvent) ? '0' : ($.$dataMap && $.$dataMap.events[params.val]) ? params.val : '1'}" 
+							min="${params.includePlayer ? '-1' : params.includeThisEvent ? '0' : '1'}" placeholder="${params.includePlayer ? '-1' :  params.includeThisEvent ? '0' : '1'}" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onEventFilterConditionFocus(elem, includeThisEvent = false, includePlayer = false) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				if (!$.$dataMap)
+					return;
+				if (includePlayer && (parseInt(elem.value) === -1 || "player".includes(elem.value.toString().toLowerCase()))) {
+					let opt = document.createElement("option");
+					opt.value = -1;
+					opt.text = `#-1 Player`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				if (includeThisEvent && (parseInt(elem.value) === 0 || "this event".includes(elem.value.toString().toLowerCase()))) {
+					let opt = document.createElement("option");
+					opt.value = 0;
+					opt.text = `#0 This Event`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				for ([eventId, ev] of $.$dataMap.events.entries()) {
+					if (!ev || eventId === 0 || !(eventId === parseInt(elem.value) || ev.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let opt = document.createElement("option");
+					opt.value = eventId;
+					opt.text = `#${eventId} ${ev.name}`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+
+			function getEnemyFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}					
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''} ${params.smallWrap ? 'smallWrapInputFilter' : ''}" data-after="?">
+						<input data-filterType="enemy" ${params.data}
+							oninput="onEnemyFilterConditionFocus(this, ${params.includeEntireTroop});" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${params.val ? params.val : 0}" min="${params.includeEntireTroop ? '-1' : '0'}" 
+							placeholder="${params.includeEntireTroop ? '-1' : '0'}" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onEnemyFilterConditionFocus(elem, includeEntireTroop = false) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				if (includeEntireTroop && (parseInt(elem.value) === -1 || "entire troop".includes(elem.value.toString().toLowerCase()))) {
+					let opt = document.createElement("option");
+					opt.value = -1;
+					opt.text = `#-1 Entire Troop`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				for (let i = 0; i < 8; i++) {
+					let opt = document.createElement("option");
+					opt.value = i;
+					opt.text = `#${(i+1)} ?`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getDataEnemyFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''} ${params.smallWrap ? 'smallWrapInputFilter' : ''}" 
+						data-after="${$.$dataEnemies[params.val] ? $.$dataEnemies[params.val].name : $.$dataEnemies[1].name}"
+					>
+						<input data-filterType="enemydata" ${params.data}
+							oninput="onDataEnemyFilterConditionFocus(this);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${$.$dataEnemies[params.val] ? params.val : '1'}" 
+							min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onDataEnemyFilterConditionFocus(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for (enemy of $.$dataEnemies) {
+					if (!enemy || !(enemy.id === parseInt(elem.value) || enemy.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let opt = document.createElement("option");
+					opt.value = enemy.id;
+					opt.text = `[${enemy.id}] ${enemy.name}`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getAnimationFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''} ${params.smallWrap ? 'smallWrapInputFilter' : ''}" 
+						data-after="${$.$dataAnimations[params.val] ? $.$dataAnimations[params.val].name : $.$dataAnimations[1].name}"
+					>
+						<input data-filterType="animation" ${params.data}
+							oninput="onAnimationFilterConditionFocus(this);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${$.$dataAnimations[params.val] ? params.val : '1'}" 
+							min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onAnimationFilterConditionFocus(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for (animation of $.$dataAnimations) {
+					if (!animation || !(animation.id === parseInt(elem.value) || animation.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let opt = document.createElement("option");
+					opt.value = animation.id;
+					opt.text = `[${animation.id}] ${animation.name}`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getTilesetFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''} ${params.smallWrap ? 'smallWrapInputFilter' : ''}" 
+						data-after="${$.$dataTilesets[params.val] ? $.$dataTilesets[params.val].name : $.$dataTilesets[1].name}"
+					>
+						<input data-filterType="tileset" ${params.data}
+							oninput="onTilesetFilterConditionFocus(this);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${$.$dataTilesets[params.val] ? params.val : '1'}" 
+							min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onTilesetFilterConditionFocus(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for (tileset of $.$dataTilesets) {
+					if (!tileset || !(tileset.id === parseInt(elem.value) || tileset.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let opt = document.createElement("option");
+					opt.value = tileset.id;
+					opt.text = `[${tileset.id}] ${tileset.name}`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getTroopsFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''} ${params.smallWrap ? 'smallWrapInputFilter' : ''}" 
+						data-after="${$.$dataTroops[params.val] ? $.$dataTroops[params.val].name : $.$dataTroops[1].name}"
+					>
+						<input data-filterType="troop" ${params.data}
+							oninput="onTroopsFilterConditionFocus(this);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${$.$dataTroops[params.val] ? params.val : '1'}" 
+							min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onTroopsFilterConditionFocus(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for (troop of $.$dataTroops) {
+					if (!troop || !(troop.id === parseInt(elem.value) || troop.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let opt = document.createElement("option");
+					opt.value = troop.id;
+					opt.text = `[${troop.id}] ${troop.name}`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getSkillFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''} ${params.smallWrap ? 'smallWrapInputFilter' : ''}" 
+						data-after="${$.$dataSkills[params.val] ? $.$dataSkills[params.val].name : $.$dataSkills[1].name}"
+					>
+						<input data-filterType="skill" ${params.data}
+							oninput="onSkillFilterConditionFocus(this);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${$.$dataSkills[params.val] ? params.val : '1'}" 
+							min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onSkillFilterConditionFocus(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for (skill of $.$dataSkills) {
+					if (!skill || !(skill.id === parseInt(elem.value) || skill.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let opt = document.createElement("option");
+					opt.value = skill.id;
+					opt.text = `[${skill.id}] ${skill.name}`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getStateFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''} ${params.smallWrap ? 'smallWrapInputFilter' : ''}" 
+						data-after="${$.$dataStates[params.val] ? $.$dataStates[params.val].name : $.$dataStates[1].name}"
+					>
+						<input data-filterType="state" ${params.data}
+							oninput="onStateFilterConditionFocus(this);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${$.$dataStates[params.val] ? params.val : '1'}" 
+							min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onStateFilterConditionFocus(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for (state of $.$dataStates) {
+					if (!state || !(state.id === parseInt(elem.value) || state.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let opt = document.createElement("option");
+					opt.value = state.id;
+					opt.text = `[${state.id}] ${state.name}`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function getClassFilterInput(params) {
+				return `
+					${params.showLabel ? `<label for="${params.id}">${params.label}</label>` : ``}
+					<div class="wrapInputFilter relative ${params.disabled ? 'disabled' : ''} ${params.smallWrap ? 'smallWrapInputFilter' : ''}" 
+						data-after="${$.$dataClasses[params.val] ? $.$dataClasses[params.val].name : $.$dataClasses[1].name}"
+					>
+						<input data-filterType="class" ${params.data}
+							oninput="onClassFilterConditionFocus(this);" onfocus="this.oninput();" 
+							onfocusout="onInputFilterConditionFocusOut(this)" onchange="verifyInputFilterConditionValue(this); updateDataAfter(this); ${params.onchange}"										
+							type="text" class="inputFilter" id="${params.id}" name="${params.id}" value="${$.$dataClasses[params.val] ? params.val : '1'}" 
+							min="1" placeholder="1" ${params.disabled ? 'disabled' : ''}
+						/>
+						<select onfocusout="onSelectFilteredConditionSelectFocusOut(this)" onchange="setValueInputFilterConditions(this);" onclick="this.onchange(); return false;"
+							class="selectFiltered" disabled>
+						</select>
+					</div>`;
+			};
+			
+			function onClassFilterConditionFocus(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				select.length = 0;
+				for (_class of $.$dataClasses) {
+					if (!_class || !(_class.id === parseInt(elem.value) || _class.name.toLowerCase().includes(elem.value.toString().toLowerCase())))
+						continue;
+					let opt = document.createElement("option");
+					opt.value = _class.id;
+					opt.text = `[${_class.id}] ${_class.name}`;
+					opt.classList.add('selectFilteredOption');
+					select.add(opt);
+				}
+				setupSelectFiltered(elem, select);
+			};
+			
+			function setupSelectFiltered(elem, select) {
+				if (select.length > 0) {
+					select.style.display = "list-item";
+					select.disabled = false;
+					select.size = select.length >= 5 ? 5 : select.length === 1 ? select.length + 1 : select.length;
+					let height = select.length > 1 ? (select.size * 25) + 2 : ((select.size - 1) * 25) + 2;
+					select.style.height = `${height}px`;
+					select.selectedIndex = 0;
+					
+					elem.onkeyup = listenForArrows.bind(select);
+				} else {
+					select.style.display = "none";
+				}
+			}
+			
+			function listenForArrows(e) {
+				let selectedIndex = this.selectedIndex;
+				if (e.code === "ArrowDown" || e.code === "ArrowRight") {
+					if (e.code === "ArrowDown")
+						this.selectedIndex++;
+					if (e.code === "ArrowRight")
+						this.selectedIndex += 10;
+					if (this.selectedIndex < 0)
+						this.selectedIndex = 0;
+					setValueInputFilterConditions(this, true);
+				}
+				if (e.code === "ArrowUp" || e.code === "ArrowLeft") {
+					if (e.code === "ArrowUp")
+						this.selectedIndex--;
+					if (e.code === "ArrowLeft")
+						this.selectedIndex -= 10;
+					if (this.selectedIndex < 0)
+						this.selectedIndex = this.options.length - 1;
+					setValueInputFilterConditions(this, true);
+				}
+				if (e.code === "Enter") {
+					setValueInputFilterConditions(this);
+				}
+			}
+			
+			function onInputFilterConditionFocusOut(elem) {
+				let select = elem.parentNode.querySelector('.selectFiltered');
+				if (!select)
+					return;
+				setTimeout(() => {
+					if (document.activeElement !== select) {
+						select.length = 0;
+						select.style.display = "none";
+					}
+				}, 1);
+				elem.onkeyup = null;
+			};
+			
+			function onSelectFilteredConditionSelectFocusOut(elem) {
+				setTimeout(() => {
+					let input = elem.parentNode.querySelector('.inputFilter');
+					if (document.activeElement !== input) {
+						elem.length = 0;
+						elem.style.display = "none";
+					}
+				}, 1);
+			}
+			
+			function setValueInputFilterConditions(select, keepOpened = false) {
+				let input = select.parentNode.querySelector('.inputFilter');
+				if (!input)
+					return;
+				input.value = !isNaN(parseInt(select.value)) ? parseInt(select.value) : 0;
+				if (!keepOpened) {
+					select.length = 0;
+					select.style.display = "none";
+					input.onkeyup = null;
+				}
+				input.onchange();
+			};
+			
+			function verifyInputFilterConditionValue(input) {
+				if (isNaN(input.value) || input.value.trim() === "") {
+					let placeholder = parseInt(input.placeholder);
+					let min = !isNaN(parseInt(input.min)) ? parseInt(input.min) : !isNaN(placeholder) ? placeholder : 0;
+					input.value = min;
+				}
+			};
+			
+			function updateSelfSwitchConditionOptionsColours(elem) {
+				let eventId = elem.getAttribute("data-eventId");
+				for (option of elem.options) {
+					let letter = option.value;
+					let val = $.$gameSelfSwitches.value(`${$.$gameMap.mapId()},${eventId},${letter}`);
+					option.style.fontWeight = "bold";
+					option.style.color = "white";
+					if (val) {
+						option.classList.add("bgGreen");
+					} else {
+						option.classList.add("bgRed");
+					}
+				}
+			};
+			
+			function updateDataAfter(elem) {
+				let filterType = elem.getAttribute('data-filterType');
+				let val = parseInt(elem.value);
+				switch (filterType) {
+					case 'switch':
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$gameSwitches.getName(val)} (${$.$gameSwitches.value(val) ? 'ON' : 'OFF'})`);
+						else 
+							elem.parentNode.setAttribute('data-after', `${$.$gameSwitches.getName(1)} (${$.$gameSwitches.value(1) ? 'ON' : 'OFF'})`);
+						break;
+					case 'var':
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$gameVariables.getName(val)} (${$.$gameVariables.value(val)})`);
+						else 
+							elem.parentNode.setAttribute('data-after', `${$.$gameVariables.getName(1)} (${$.$gameVariables.value(1)})`);
+						break;
+					case 'item':
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$dataItems[val].name}`);
+						else
+							elem.parentNode.setAttribute('data-after', `${$.$dataItems[1].name}`);
+						break;
+					case 'weapon':
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$dataWeapons[val].name}`);
+						else
+							elem.parentNode.setAttribute('data-after', `${$.$dataWeapons[1].name}`);
+						break;
+					case 'armor':
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$dataArmors[val].name}`);
+						else
+							elem.parentNode.setAttribute('data-after', `${$.$dataArmors[1].name}`);
+						break;
+					case 'actor':
+						if (val === 0)
+							elem.parentNode.setAttribute('data-after', `Entire Party`);
+						else if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$dataActors[val].name}`);
+						else 
+							elem.parentNode.setAttribute('data-after', `${$.$dataActors[1].name}`);
+						break;
+					case 'commonevent':
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$dataCommonEvents[val].name}`);
+						else
+							elem.parentNode.setAttribute('data-after', `${$.$dataCommonEvents[1].name}`);
+						break;
+					case 'enemy':
+						if (val === -1)
+							elem.parentNode.setAttribute('data-after', `Entire Troop`);
+						else if (!isNaN(val) && val >= 0)
+							elem.parentNode.setAttribute('data-after', `?`);
+						break;
+					case 'enemydata':
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$dataEnemies[val].name}`);
+						else
+							elem.parentNode.setAttribute('data-after', `${$.$dataEnemies[1].name}`);
+						break;
+					case 'event':
+						if (val === -1)
+							elem.parentNode.setAttribute('data-after', `Player`);
+						else if (val === 0)
+							elem.parentNode.setAttribute('data-after', `This event`);
+						else if ($.$dataMap && $.$dataMap.events[val])
+							elem.parentNode.setAttribute('data-after', `${$.$dataMap.events[val].name}`);
+						else 
+							elem.parentNode.setAttribute('data-after', `${$.$dataMap.events[1].name}`);
+						break;
+					case 'animation': 
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$dataAnimations[val].name}`);
+						else 
+							elem.parentNode.setAttribute('data-after', `${$.$dataAnimations[1].name}`);
+						break;
+					case 'tileset':
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$dataTilesets[val].name}`);
+						else 
+							elem.parentNode.setAttribute('data-after', `${$.$dataTilesets[1].name}`);
+						break;
+					case 'troop':
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$dataTroops[val].name}`);
+						else 
+							elem.parentNode.setAttribute('data-after', `${$.$dataTroops[1].name}`);
+						break;
+					case 'state':
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$dataStates[val].name}`);
+						else 
+							elem.parentNode.setAttribute('data-after', `${$.$dataStates[1].name}`);
+						break;
+					case 'skill':
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$dataSkills[val].name}`);
+						else 
+							elem.parentNode.setAttribute('data-after', `${$.$dataSkills[1].name}`);
+						break;
+					case 'class':
+						if (!isNaN(val) && val > 0)
+							elem.parentNode.setAttribute('data-after', `${$.$dataClasses[val].name}`);
+						else 
+							elem.parentNode.setAttribute('data-after', `${$.$dataClasses[1].name}`);
+						break;
+					default:
+						elem.parentNode.setAttribute('data-after', ``);
+						break;
+				}
+			}
+			
+			//-----------------------------------------------------------------
+			// utils functions
+			
+			function preventDefaults(e) {
+				e.preventDefault();
+				e.stopPropagation();
+			};
+			
+			function autoFitTextArea(textArea) {
+				textArea.style.height = ""; 
+				textArea.style.height = textArea.scrollHeight + 5 + "px";
+			};
+			
+			function autofitAllTextArea() {
+				for (textArea of document.querySelectorAll(".unfitTextArea")) {
+					autoFitTextArea(textArea);
+					textArea.classList.remove("unfitTextArea");
+				}
+			};
+			
+			function bodyOnChange() {
+				autofitAllTextArea();
+			};
+			
+			function matchRegex(input) {
+				const selectionStart = input.selectionStart;
+				const regex = new RegExp(input.getAttribute('data-regex'), input.getAttribute('data-regexGlobal'));
+				const val = input.value;
+				if (regex.test(val)) {
+					input.value = val.replace(regex, '');
+					input.setSelectionRange(selectionStart - (val.length - input.value.length), selectionStart - (val.length - input.value.length));
+				}
+			};
+			
+			function escapeHTMLQuotes(str) {
+				return str.replaceAll('"', '&quot;')
+			};
+			
+			function nextElementSiblingOfClass(element, siblingClass) {
+				let nextElementSibling = element.nextElementSibling;
+				while (nextElementSibling && !nextElementSibling.classList.contains(siblingClass))
+					nextElementSibling = nextElementSibling.nextElementSibling;
+					
+				return nextElementSibling;
+			};
+			
+			function previousElementSiblingOfClass(element, siblingClass) {
+				let previousElementSibling = element.previousElementSibling;
+				while (previousElementSibling && !previousElementSibling.classList.contains(siblingClass))
+					previousElementSibling = previousElementSibling.previousElementSibling;
+					
+				return previousElementSibling;
+			};
+			
+			function checkAllCheckbox(query, triggerOnChange = true) {
+				const checkboxs = document.querySelectorAll(query);
+				
+				for (const checkbox of checkboxs) {
+					checkbox.checked = true;
+					if (triggerOnChange)
+						checkbox.onchange();
+				}
+			};
+
+			function uncheckAllCheckbox(query, triggerOnChange = true) {
+				const checkboxs = document.querySelectorAll(query);
+				
+				for (const checkbox of checkboxs) {
+					checkbox.checked = false;
+					if (triggerOnChange)
+						checkbox.onchange();
+				}
+			};
+			
+			//-----------------------------------------------------------------
+			// custom event handler
+			
+			function triggerChildEvent(elem, selector, attrName) {
+				for (radio of elem.querySelectorAll(selector)) {
+					let func = new Function('e', `with(document) { with(this) { ${radio.getAttribute(attrName)} } }`);
+					func.call(radio, {});
+				}
+			};
+			
+			//-----------------------------------------------------------------
+			// linked input
+			
+			function toggleLinkedInput(elem, id, triggerOnChangeEvent = true) {
+				let linkedInput;
+				let parent = elem.parentNode;
+				while (!linkedInput) {
+					if (!parent)
+						return;
+					linkedInput = parent.querySelector(`[id='${id}']`);
+					parent = parent.parentNode;
+				}
+				linkedInput.disabled = !elem.checked;
+				if (linkedInput.disabled)
+					linkedInput.parentNode.classList.add('disabled');
+				else
+					linkedInput.parentNode.classList.remove('disabled');
+				
+				if (triggerOnChangeEvent && !linkedInput.disabled && linkedInput.onchange) 
+					linkedInput.onchange();
+			};
+
+			//------------------------------------------------------------------------------------------------
+			//tooltip
+			
+			function showTooltip() {
+				let elem = document.querySelectorAll(".info")[0];
+				if (!elem)
+					return;
+				elem.classList.remove("invisible");
+				elem.style.opacity = 255;
+			};
+			
+			function hideTooltip() {
+				let elem = document.querySelectorAll(".info")[0];
+				if (!elem)
+					return;
+				elem.classList.add("invisible");
+				elem.style.opacity = 0;
+			};
+			
+			//------------------------------------------------------------------------------------------------
+			//collapser
+			
+			function toggleCollapse(elem) {
+				if (!elem)
+					return;
+				let open = !(elem.getAttribute("data-open") === "true");
+				elem.setAttribute("data-open", open);
+				if (!open) {
+					elem.innerHTML = elem.innerHTML.replace("Hide", "Show");
+					elem.parentNode.parentNode.parentNode.nextElementSibling.classList.add("uncollapsed");
+				} else {
+					elem.innerHTML = elem.innerHTML.replace("Show", "Hide");
+					elem.parentNode.parentNode.parentNode.nextElementSibling.classList.remove("uncollapsed");
+				}
+			};
+			
+			//------------------------------------------------------------------------------------------------
+			//hyperlink
+			
+			function hyperlink(destView, inputValues = [], target) {
+				goToView(destView);
+				setInputValues(inputValues);
+				if (target)
+					scrollToElement(target);
+			};
+			
+			function getEventsHyperlink(eventId) {
+				return `
+					<span class="hyperlink block" onclick="hyperlink('Events', [], '#event${eventId}')">
+						<b>See in Events</b>
+					</span>
+				`;
+			};
+			
+			function getInterpreterHyperlink(eventId) {
+				return `
+					<span class="hyperlink block" onclick="hyperlink('Interpreter', [['#selectEvent', ${eventId}]], '#commandList')">
+						<b>See in Interpreter</b>
+					</span>
+				`;
+			};
+			
+			function getSelfSwitchHyperlink(eventId) {
+				return `
+					<span class="hyperlink block" onclick="hyperlink('SelfSwitches', [], '#event${eventId}')">
+						<b>See in Self Switches</b>
+					</span>
+				`;
+			};	
+			
+			main();
+			
+			window.addEventListener("focus", function(event) { 
+				refreshView();
+			}, false);
+			
+			window.addEventListener("keydown", function(event) {
+				if (!event.ctrlKey && !event.altKey) {
+					switch (event.keyCode) {
+						case 116: // F5
+							if	($.SceneManager.reloadGame)
+								$.SceneManager.reloadGame();
+							else
+								location.reload();
+							break;
+						case 119: // F8
+							if ($.SceneManager.showDevTools)
+								$.SceneManager.showDevTools();
+							else 
+								$.require('nw.gui').Window.get().showDevTools();
+							break;
+					}
+				}
+			});   
+		</script>
+    </body>
+</html>
